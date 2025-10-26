@@ -1,6 +1,7 @@
 import os
 import logging as log
 from contextlib import suppress
+from os.path import exists
 from pathlib import Path
 
 from nio import AsyncClient, InviteMemberEvent, RoomMessageText, AsyncClientConfig, MegolmEvent, \
@@ -18,7 +19,7 @@ for logger_name in ["nio.client", "nio.store.sql", "peewee", "nio.responses", "s
 
 
 class MultiRoomOrderbot:
-    def __init__(self):
+    def __init__(self, load_all=False):
         self.homeserver = os.environ.get("MSERVER")
         self.mxid = os.environ.get("MUSERNAME")
         raw = os.environ.get("MSTORE", "./multi_room_store/")
@@ -33,6 +34,8 @@ class MultiRoomOrderbot:
         self.joined_rooms = []
         self.registered_rooms = {}
         self.init = False
+        self.load_all = load_all
+
 
     async def connect(self):
         try:
@@ -61,11 +64,20 @@ class MultiRoomOrderbot:
             except LocalProtocolError:
                 log.debug("Keys already queried, skipping")
 
+
+        if not self.load_all:
+            if exists("next_batch_multi"):
+                with open("next_batch_multi", "r") as next_batch_token:
+                    log.debug("Loading next_batch token from file.")
+                    self.client.next_batch = next_batch_token.read()
+
         self.client.add_event_callback(self.on_invite, InviteMemberEvent)
         self.client.add_response_callback(self.sync, SyncResponse)
         self.client.add_response_callback(self.check_for_leaves, SyncResponse)
         self.client.add_event_callback(self.handle_registration_msg, RoomMessageText)
         self.client.add_event_callback(self.on_encrypted, MegolmEvent)
+        if not self.load_all:
+            self.client.add_response_callback(self.save_next_batch, SyncResponse)
 
 
     async def handle_invites(self, room):
@@ -83,6 +95,12 @@ class MultiRoomOrderbot:
                 },
             )
             log.debug(f"Current joined rooms after invite: {self.joined_rooms}")
+
+
+    async def save_next_batch(self, response):
+        if not isinstance(response, list) and hasattr(response, 'next_batch'):
+            with open("next_batch_multi", "w") as next_batch_token:
+                next_batch_token.write(response.next_batch)
 
 
     async def on_invite(self, room, event: InviteMemberEvent):
