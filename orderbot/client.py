@@ -10,6 +10,7 @@ from nio import AsyncClient, InviteMemberEvent, RoomMessageText, AsyncClientConf
 from sqlalchemy import select
 
 from orderbot.db_classes import setup_db, Rooms
+from orderbot.order_parser_class import ParserWrapper
 
 loglevel = log.DEBUG
 log.basicConfig(format="%(levelname)s|%(asctime)s: %(message)s", level=loglevel)
@@ -168,7 +169,7 @@ class MultiRoomOrderbot:
             log.debug(f"Registration message in room {room.room_id} from {event.sender}: {message}")
             if message.lower().startswith("!ob register"):
                 if room.room_id not in self.registered_rooms:
-                    self.registered_rooms[room.room_id] = None  # todo: add parser mapping
+                    self.registered_rooms[room.room_id] = ParserWrapper()  # todo: add parser mapping
                     await self.client.room_send(
                         room.room_id,
                         message_type="m.room.message",
@@ -215,6 +216,11 @@ class MultiRoomOrderbot:
                         },
                     )
                     log.info(f"Room {room.room_id} is not registered.")
+
+    async def handle_order_msg(self, room, event: RoomMessageText):
+        valid = True
+        if valid:
+            self.registered_rooms[room.room_id].parse_msg(event.body, direct=False)
 
 
     async def listen(self):
