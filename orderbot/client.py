@@ -1,7 +1,7 @@
-import asyncio
 import os
 import logging as log
 from contextlib import suppress
+
 from os.path import exists
 from pathlib import Path
 
@@ -36,7 +36,7 @@ class MultiRoomOrderbot:
 
         self.session = None
 
-        self.joined_rooms = []
+        self.joined_rooms = set()
         self.registered_rooms = {}
 
         self.init = False
@@ -90,7 +90,7 @@ class MultiRoomOrderbot:
     async def handle_invites(self, room):
         rid = room.room_id
 
-        if rid in self.joined_rooms:#
+        if rid in self.joined_rooms:
             return
 
         resp = await self.client.join(rid)
@@ -98,7 +98,7 @@ class MultiRoomOrderbot:
             log.error(f"Failed to join room {rid}: {resp.message}")
             return
 
-        self.joined_rooms.append(rid)
+        self.joined_rooms.add(rid)
         log.info(f"Joined invited room: {rid}")
         log.debug(f"Current joined rooms after invite: {self.joined_rooms}")
 
@@ -111,29 +111,37 @@ class MultiRoomOrderbot:
     async def on_invite(self, room, event: InviteMemberEvent):
         if event.state_key != self.client.user:
             return
-
         log.info(f"Received invite to room {room.room_id} from {event.sender}")
-        log.debug(event)
         await self.handle_invites(room)
 
     async def sync(self, response):
         if not self.init:
-            for room_id, room in response.rooms.join.items():
-                log.debug(response.rooms)
-                self.joined_rooms.append(room_id)
 
+            self.joined_rooms |= set(response.rooms.join.keys())
             for room_id, room in response.rooms.invite.items():
                 await self.handle_invites(room)
 
             self.init = True
 
-        # do a db check, register rooms that are in the db
         stmt = select(Rooms.room_id).where(Rooms.is_active.is_(True))
-        rooms = self.session.execute(stmt).all()
-        for (room_id,) in rooms:
-            if room_id in self.joined_rooms:
-                if room_id not in self.registered_rooms:
-                    self.registered_rooms[room_id] = None
+        db_rooms = {rid for (rid,) in self.session.execute(stmt).all()}
+
+        for room_id in db_rooms & self.joined_rooms:
+            if room_id not in self.registered_rooms:
+                self.registered_rooms[room_id] = None  # todo: add parser mapping
+
+        joined_resp = await self.client.joined_rooms()
+        if hasattr(joined_resp, "rooms"):
+            for room_id in joined_resp.rooms:
+                member_resp = await self.client.joined_members(room_id)
+                if hasattr(member_resp, "members"):
+                    if len(member_resp.members) == 1:
+                        if room_id in self.joined_rooms:
+                            self.joined_rooms.remove(room_id)
+                        with suppress(Exception):
+                            await self.client.room_leave(room_id)
+                            await self.client.room_forget(room_id)
+                        log.info(f"Left empty room: {room_id}")
 
     async def check_for_leaves(self, response):
         if not isinstance(response, list) and hasattr(response.rooms, 'leave'):
@@ -207,6 +215,7 @@ class MultiRoomOrderbot:
                         },
                     )
                     log.info(f"Room {room.room_id} is not registered.")
+
 
     async def listen(self):
         await self.client.sync_forever(timeout=10000, full_state=False, )
