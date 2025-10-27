@@ -1,3 +1,4 @@
+import asyncio
 import os
 import logging as log
 from contextlib import suppress
@@ -5,7 +6,7 @@ from os.path import exists
 from pathlib import Path
 
 from nio import AsyncClient, InviteMemberEvent, RoomMessageText, AsyncClientConfig, MegolmEvent, \
-    LocalProtocolError, SyncResponse
+    LocalProtocolError, SyncResponse, JoinError
 from sqlalchemy import select
 
 from orderbot.db_classes import setup_db, Rooms
@@ -87,20 +88,19 @@ class MultiRoomOrderbot:
         self.client.add_response_callback(self.save_next_batch, SyncResponse)
 
     async def handle_invites(self, room):
-        if room.room_id not in self.joined_rooms:
-            await self.client.join(room.room_id)
-            self.joined_rooms.append(room.room_id)
-            log.info(f"Joined invited room: {room.room_id}")
-            # sent welcome message
-            await self.client.room_send(
-                room.room_id,
-                message_type="m.room.message",
-                content={
-                    "msgtype": "m.text",
-                    "body": f"Hello!",
-                },
-            )
-            log.debug(f"Current joined rooms after invite: {self.joined_rooms}")
+        rid = room.room_id
+
+        if rid in self.joined_rooms:#
+            return
+
+        resp = await self.client.join(rid)
+        if isinstance(resp, JoinError):
+            log.error(f"Failed to join room {rid}: {resp.message}")
+            return
+
+        self.joined_rooms.append(rid)
+        log.info(f"Joined invited room: {rid}")
+        log.debug(f"Current joined rooms after invite: {self.joined_rooms}")
 
     async def save_next_batch(self, response):
         if not isinstance(response, list) and hasattr(response, 'next_batch'):
@@ -113,15 +113,17 @@ class MultiRoomOrderbot:
             return
 
         log.info(f"Received invite to room {room.room_id} from {event.sender}")
+        log.debug(event)
         await self.handle_invites(room)
 
     async def sync(self, response):
         if not self.init:
             for room_id, room in response.rooms.join.items():
+                log.debug(response.rooms)
                 self.joined_rooms.append(room_id)
 
             for room_id, room in response.rooms.invite.items():
-                await self.handle_invites(room_id)
+                await self.handle_invites(room)
 
             self.init = True
 
@@ -149,7 +151,6 @@ class MultiRoomOrderbot:
             log.warning(f"Could not decrypt message in {room.room_id}: {e}")
 
     async def handle_registration_msg(self, room, event: RoomMessageText):
-        # filter out msg from bot
         if event.sender == self.mxid:
             return
 
