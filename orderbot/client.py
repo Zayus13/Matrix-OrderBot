@@ -7,6 +7,7 @@ from pathlib import Path
 
 from nio import AsyncClient, InviteMemberEvent, RoomMessageText, AsyncClientConfig, MegolmEvent, \
     LocalProtocolError, SyncResponse, JoinError
+
 from sqlalchemy import select
 
 from orderbot.db_classes import setup_db, Rooms
@@ -119,39 +120,67 @@ class MultiRoomOrderbot:
         if event.state_key != self.client.user:
             return
         log.info(f"Received invite to room {room.room_id} from {event.sender}")
-        await self.handle_invites(room)
         success = await self.handle_invites(room)
         self.run_maintenance = self.run_maintenance or success
 
+    async def maintain_room_state(self):
+        for room_id in list(self.joined_rooms):
+            with suppress(Exception):
+                member_resp = await self.client.joined_members(room_id)
+                members = getattr(member_resp, "members", {}) or {}
+                if len(members) <= 1:
+                    with suppress(Exception):
+                        await self.client.room_leave(room_id)
+                    with suppress(Exception):
+                        await self.client.room_forget(room_id)
+                    self.joined_rooms.discard(room_id)
+                    log.info(f"Left empty room: {room_id}")
+
+        with suppress(Exception):
+            direct_resp = await self.client.list_direct_rooms()
+            direct_map = getattr(direct_resp, "rooms", {}) or {}
+            dm_rooms = {r for rooms in direct_map.values() for r in rooms}
+        if "dm_rooms" not in locals():
+            dm_rooms = set()
+
+        for rid in self.joined_rooms:
+            self.room_types[rid] = "dm" if rid in dm_rooms else "room"
+
+        for rid in list(self.room_types.keys()):
+            if rid not in self.joined_rooms:
+                self.room_types.pop(rid, None)
+
+        log.info(
+            f"Joined Rooms: {len(self.joined_rooms)}, "
+            f"Registered Room: {len(self.registered_rooms)}"
+        )
+        log.debug(f"Room type map: {self.room_types}")
 
     async def sync(self, response):
-        if not self.init:
-
-            self.joined_rooms |= set(response.rooms.join.keys())
-            for room_id, room in response.rooms.invite.items():
-                await self.handle_invites(room)
-
-            self.init = True
+        joined_resp = await self.client.joined_rooms()
+        self.joined_rooms = set(getattr(joined_resp, "rooms", []) or [])
 
         stmt = select(Rooms.room_id).where(Rooms.is_active.is_(True))
         db_rooms = {rid for (rid,) in self.session.execute(stmt).all()}
-
         for room_id in db_rooms & self.joined_rooms:
             if room_id not in self.registered_rooms:
-                self.registered_rooms[room_id] = None  # todo: add parser mapping
+                self.registered_rooms[room_id] = None
+                log.debug(f"Registered active room: {room_id}")
 
-        joined_resp = await self.client.joined_rooms()
-        if hasattr(joined_resp, "rooms"):
-            for room_id in joined_resp.rooms:
-                member_resp = await self.client.joined_members(room_id)
-                if hasattr(member_resp, "members"):
-                    if len(member_resp.members) == 1:
-                        if room_id in self.joined_rooms:
-                            self.joined_rooms.remove(room_id)
-                        with suppress(Exception):
-                            await self.client.room_leave(room_id)
-                            await self.client.room_forget(room_id)
-                        log.info(f"Left empty room: {room_id}")
+        invited = getattr(response, "rooms", None)
+        if invited and hasattr(invited, "invite"):
+            for rid, invite_info in invited.invite.items():
+                with suppress(Exception):
+                    success = await self.handle_invites(invite_info)
+                    if success:
+                        log.info(f"Joined new invited room: {rid}")
+                        self.run_maintenance = True
+
+        self._sync_tick += 1
+        if self.run_maintenance or (self._sync_tick % MAINTENANCE_INTERVAL == 0):
+            self._sync_tick = 0
+            self.run_maintenance = False
+            await self.maintain_room_state()
 
     async def check_for_leaves(self, response):
         if not isinstance(response, list) and hasattr(response.rooms, 'leave'):
