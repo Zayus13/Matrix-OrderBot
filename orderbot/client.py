@@ -20,6 +20,7 @@ for logger_name in ["nio.client", "nio.store.sql", "peewee", "nio.responses", "s
     logger = log.getLogger(logger_name)
     logger.setLevel(log.WARNING)
 
+MAINTENANCE_INTERVAL = 10
 
 class MultiRoomOrderbot:
     def __init__(self, load_all=False):
