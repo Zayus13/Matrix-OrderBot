@@ -39,9 +39,13 @@ class MultiRoomOrderbot:
 
         self.joined_rooms = set()
         self.registered_rooms = {}
+        self.room_types = {}
 
         self.init = False
         self.load_all = load_all
+
+        self._sync_tick = 0
+        self.run_maintenance = False
 
     async def connect(self):
         try:
