@@ -8,7 +8,7 @@ from sqlalchemy import (
     Boolean,
 )
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, sessionmaker, Session
 from sqlalchemy.sql.functions import now
 
 Base = declarative_base()
@@ -26,7 +26,7 @@ class Participant(Base):
     is_active = Column(Boolean, default=True)
 
 
-class DB_Order(Base):
+class DBOrder(Base):
     __tablename__ = "orders"
     oid = Column(Integer, primary_key=True)
     name = Column(String)
@@ -48,9 +48,9 @@ class Cuts(Base):
     name = Column(String)
     timestamp = Column(DATETIME, default=now())
 
+def setup_db(path: str) -> Session:
+    engine = create_engine(path)
+    Base.metadata.create_all(engine)
 
-def setup_db(path: str) -> None:
-    db = create_engine(path)
-    Participant.__table__.create(bind=db, checkfirst=True)
-    DB_Order.__table__.create(bind=db, checkfirst=True)
-    Cuts.__table__.create(bind=db, checkfirst=True)
+    return sessionmaker(bind=engine)()
+
