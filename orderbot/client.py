@@ -97,16 +97,17 @@ class MultiRoomOrderbot:
         rid = room.room_id
 
         if rid in self.joined_rooms:
-            return
+            return False
 
         resp = await self.client.join(rid)
         if isinstance(resp, JoinError):
             log.error(f"Failed to join room {rid}: {resp.message}")
-            return
+            return False
 
         self.joined_rooms.add(rid)
         log.info(f"Joined invited room: {rid}")
         log.debug(f"Current joined rooms after invite: {self.joined_rooms}")
+        return True
 
     async def save_next_batch(self, response):
         if not isinstance(response, list) and hasattr(response, 'next_batch'):
@@ -119,6 +120,9 @@ class MultiRoomOrderbot:
             return
         log.info(f"Received invite to room {room.room_id} from {event.sender}")
         await self.handle_invites(room)
+        success = await self.handle_invites(room)
+        self.run_maintenance = self.run_maintenance or success
+
 
     async def sync(self, response):
         if not self.init:
