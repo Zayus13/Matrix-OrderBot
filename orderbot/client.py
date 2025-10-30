@@ -34,8 +34,13 @@ class MultiRoomOrderbot:
         self.storage_path = str(store_dir)
         self.batch_store_path = os.path.join(self.storage_path, "multi_room_bot_store")
 
-        self.client = AsyncClient(self.homeserver, "@" + self.mxid, store_path=self.storage_path,
-                                  device_id="MULTIROOMBOT", config=AsyncClientConfig(encryption_enabled=True))
+        self.client = AsyncClient(self.homeserver,
+                                  "@" + self.mxid,
+                                  store_path=self.storage_path,
+                                  device_id="MULTIROOMBOT",
+                                  config=AsyncClientConfig(
+                                      encryption_enabled=True,
+                                  ))
 
         self.session = None
 
@@ -46,7 +51,7 @@ class MultiRoomOrderbot:
         self.init = False
         self.load_all = load_all
 
-        self._sync_tick = 0
+        self._sync_tick = -1
         self.run_maintenance = False
 
     async def connect(self):
@@ -86,6 +91,7 @@ class MultiRoomOrderbot:
                 with open(self.batch_store_path, "r") as next_batch_token:
                     log.debug("Loading next_batch token from file.")
                     self.client.next_batch = next_batch_token.read()
+
 
         self.client.add_event_callback(self.on_invite, InviteMemberEvent)
         self.client.add_response_callback(self.sync, SyncResponse)
