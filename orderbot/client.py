@@ -203,69 +203,59 @@ class MultiRoomOrderbot:
         except Exception as e:
             log.warning(f"Could not decrypt message in {room.room_id}: {e}")
 
+    async def send_text_message(self, room_id: str, body: str):
+        return await self.client.room_send(
+            room_id,
+            message_type="m.room.message",
+            content={"msgtype": "m.text", "body": body},
+            ignore_unverified_devices=True,
+        )
+
     async def handle_registration_msg(self, room, event: RoomMessageText):
         if event.sender == self.mxid:
             return
 
-        inp = event.body.split("\n")
-        for message in inp:
-            message = message.strip()
-            log.debug(f"Registration message in room {room.room_id} from {event.sender}: {message}")
-            if message.lower().startswith("!ob register"):
-                if room.room_id not in self.registered_rooms:
-                    self.registered_rooms[room.room_id] = ParserWrapper()  # todo: add parser mapping
-                    await self.client.room_send(
-                        room.room_id,
-                        message_type="m.room.message",
-                        content={
-                            "msgtype": "m.text",
-                            "body": f"Room {room.room_id} registered successfully by {event.sender}!",
-                        },
-                    )
-                    log.info(f"Registered room {room.room_id} by {event.sender}")
-                    # but room into database
-                    new_room = Rooms(room_id=room.room_id, name=room.display_name, is_active=True)
-                    self.session.add(new_room)
-                else:
-                    await self.client.room_send(
-                        room.room_id,
-                        message_type="m.room.message",
-                        content={
-                            "msgtype": "m.text",
-                            "body": f"Room {room.room_id} is already registered.",
-                        },
-                    )
-                    log.info(f"Room {room.room_id} is already registered.")
+        room_id = room.room_id
+        room_kind = self.room_types.get(room_id)
+        is_registered = room_id in self.registered_rooms.keys()
 
-            if message.lower().startswith(
-                    "!ob unregister"):  # todo: check balance in database, add if balance is zero -> delete from db else only unregister + final balance.
-                if room.room_id in self.registered_rooms:
-                    del self.registered_rooms[room.room_id]
-                    await self.client.room_send(
-                        room.room_id,
-                        message_type="m.room.message",
-                        content={
-                            "msgtype": "m.text",
-                            "body": f"Room {room.room_id} unregistered successfully by {event.sender}!",
-                        },
-                    )
-                    log.info(f"Unregistered room {room.room_id} by {event.sender}")
+        for raw_line in event.body.splitlines():
+            message = raw_line.strip()
+            if not message:
+                continue
+
+            log.debug(f"Registration message in room {room_id} from {event.sender}: {message}")
+            m = message.lower()
+
+            # --- REGISTER ---
+            if m.startswith("!ob register"):
+                if not is_registered and room_kind == "room":
+                    self.registered_rooms[room_id] = ParserWrapper()
+                    await self.send_text_message(room_id, f"Room {room_id} registered successfully by {event.sender}!")
+                    log.info(f"Registered room {room_id} by {event.sender}")
+
+                elif room_kind != "room":
+                    await self.send_text_message(room_id, f"Room {room_id} is a direct message room.")
+                    log.info(f"Room {room_id} cannot be registered as it is a DM.")
                 else:
-                    await self.client.room_send(
-                        room.room_id,
-                        message_type="m.room.message",
-                        content={
-                            "msgtype": "m.text",
-                            "body": f"Room {room.room_id} is not registered.",
-                        },
-                    )
-                    log.info(f"Room {room.room_id} is not registered.")
+                    await self.send_text_message(room_id, f"Room {room_id} is already registered.")
+                    log.info(f"Room {room_id} is already registered.")
+
+            # --- UNREGISTER ---
+            elif m.startswith("!ob unregister"):
+                if is_registered:
+                    del self.registered_rooms[room_id]
+                    await self.send_text_message(room_id,
+                                                 f"Room {room_id} unregistered successfully by {event.sender}!")
+                    log.info(f"Unregistered room {room_id} by {event.sender}")
+                else:
+                    await self.send_text_message(room_id, f"Room {room_id} is not registered.")
+                    log.info(f"Room {room_id} is not registered.")
 
     async def handle_order_msg(self, room, event: RoomMessageText):
         valid = True
         if valid:
             self.registered_rooms[room.room_id].parse_msg(event.body, direct=False)
-
 
     async def listen(self):
         await self.client.sync_forever(timeout=10000, full_state=False, )
