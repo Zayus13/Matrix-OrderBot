@@ -28,7 +28,7 @@ MAINTENANCE_INTERVAL = 10
 class MultiRoomOrderbot:
     def __init__(self, load_all=False):
         self.homeserver = os.environ.get("MSERVER")
-        self.mxid = os.environ.get("MUSERNAME")
+        self.mxid = "@" + os.environ.get("MUSERNAME")
 
         raw = os.environ.get("MSTORE", "./multi_room_store/")
         store_dir = Path(raw).expanduser().resolve()
@@ -37,7 +37,7 @@ class MultiRoomOrderbot:
         self.batch_store_path = os.path.join(self.storage_path, "multi_room_bot_store")
 
         self.client = AsyncClient(self.homeserver,
-                                  "@" + self.mxid,
+                                  self.mxid,
                                   store_path=self.storage_path,
                                   device_id="MULTIROOMBOT",
                                   config=AsyncClientConfig(
@@ -124,7 +124,6 @@ class MultiRoomOrderbot:
         if not isinstance(response, list) and hasattr(response, 'next_batch'):
             with open(self.batch_store_path, "w") as next_batch_token:
                 next_batch_token.write(response.next_batch)
-                log.debug("Saved next_batch token to file.")
 
     async def on_invite(self, room, event: InviteMemberEvent):
         if event.state_key != self.client.user:
@@ -187,7 +186,7 @@ class MultiRoomOrderbot:
                         self.run_maintenance = True
 
         if len(self.msg_queue) > 0:
-            msg = self.msg_queue.pop(0)
+            room_id, msg = self.msg_queue.pop(0)
             if "\n" in msg:
                 content = {
                     "body": f"```{msg}```",
@@ -197,7 +196,7 @@ class MultiRoomOrderbot:
                 }
             else:
                 content = {"body": msg, "msgtype": "m.text"}
-            await self.sent_text_content(msg[0], content)
+            await self.sent_text_content(room_id, content)
 
         self._sync_tick += 1
         if self.run_maintenance or (self._sync_tick % MAINTENANCE_INTERVAL == 0):
@@ -294,9 +293,10 @@ class MultiRoomOrderbot:
             message = message.strip()
             log.debug(f"Message in room {room_id} from {event.sender}: {message}")
             if is_direct:
-                single_line = shlex.split(message)
-                res = self.dm_parser.parse(single_line)
-                self.msg_queue.append((room_id, res))
+                #single_line = shlex.split(message)
+                #res = self.dm_parser.parse(single_line)
+                self.msg_queue.append((room_id, message))
+
 
     async def listen(self):
         await self.client.sync_forever(timeout=10000, full_state=False, )
