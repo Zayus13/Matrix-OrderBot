@@ -4,6 +4,7 @@ from contextlib import suppress
 
 from os.path import exists
 from pathlib import Path
+import shlex
 
 from nio import AsyncClient, InviteMemberEvent, RoomMessageText, AsyncClientConfig, MegolmEvent, \
     LocalProtocolError, SyncResponse, JoinError
@@ -11,7 +12,7 @@ from nio import AsyncClient, InviteMemberEvent, RoomMessageText, AsyncClientConf
 from sqlalchemy import select
 
 from orderbot.db_classes import setup_db, Rooms
-from orderbot.order_parser_class import ParserWrapper
+from orderbot.order_parser_class import ParserWrapper, DMParser
 
 loglevel = log.DEBUG
 log.basicConfig(format="%(levelname)s|%(asctime)s: %(message)s", level=loglevel)
@@ -22,6 +23,7 @@ for logger_name in ["nio.client", "nio.store.sql", "peewee", "nio.responses", "s
     logger.setLevel(log.WARNING)
 
 MAINTENANCE_INTERVAL = 10
+
 
 class MultiRoomOrderbot:
     def __init__(self, load_all=False):
@@ -53,6 +55,8 @@ class MultiRoomOrderbot:
 
         self._sync_tick = -1
         self.run_maintenance = False
+        self.msg_queue = []
+        self.dm_parser = DMParser()
 
     async def connect(self):
         try:
@@ -92,13 +96,13 @@ class MultiRoomOrderbot:
                     log.debug("Loading next_batch token from file.")
                     self.client.next_batch = next_batch_token.read()
 
-
         self.client.add_event_callback(self.on_invite, InviteMemberEvent)
         self.client.add_response_callback(self.sync, SyncResponse)
         self.client.add_response_callback(self.check_for_leaves, SyncResponse)
         self.client.add_event_callback(self.handle_registration_msg, RoomMessageText)
         self.client.add_event_callback(self.on_encrypted, MegolmEvent)
         self.client.add_response_callback(self.save_next_batch, SyncResponse)
+        self.client.add_event_callback(self.handle_msg, RoomMessageText)
 
     async def handle_invites(self, room):
         rid = room.room_id
@@ -182,6 +186,19 @@ class MultiRoomOrderbot:
                         log.info(f"Joined new invited room: {rid}")
                         self.run_maintenance = True
 
+        if len(self.msg_queue) > 0:
+            msg = self.msg_queue.pop(0)
+            if "\n" in msg:
+                content = {
+                    "body": f"```{msg}```",
+                    "format": "org.matrix.custom.html",
+                    "formatted_body": f"<pre><code>{msg}</code></pre>",
+                    "msgtype": "m.text",
+                }
+            else:
+                content = {"body": msg, "msgtype": "m.text"}
+            await self.sent_text_content(msg[0], content)
+
         self._sync_tick += 1
         if self.run_maintenance or (self._sync_tick % MAINTENANCE_INTERVAL == 0):
             self._sync_tick = 0
@@ -208,6 +225,14 @@ class MultiRoomOrderbot:
             room_id,
             message_type="m.room.message",
             content={"msgtype": "m.text", "body": body},
+            ignore_unverified_devices=True,
+        )
+
+    async def sent_text_content(self, room_id: str, content: dict):
+        return await self.client.room_send(
+            room_id,
+            message_type="m.room.message",
+            content=content,
             ignore_unverified_devices=True,
         )
 
@@ -256,6 +281,22 @@ class MultiRoomOrderbot:
         valid = True
         if valid:
             self.registered_rooms[room.room_id].parse_msg(event.body, direct=False)
+
+    async def handle_msg(self, room, event: RoomMessageText):
+        room_id = room.room_id
+        is_direct = self.room_types.get(room_id) == "dm"
+
+        if event.sender == self.mxid:
+            return
+
+        inp = event.body.split("\n")
+        for message in inp:
+            message = message.strip()
+            log.debug(f"Message in room {room_id} from {event.sender}: {message}")
+            if is_direct:
+                single_line = shlex.split(message)
+                res = self.dm_parser.parse(single_line)
+                self.msg_queue.append((room_id, res))
 
     async def listen(self):
         await self.client.sync_forever(timeout=10000, full_state=False, )

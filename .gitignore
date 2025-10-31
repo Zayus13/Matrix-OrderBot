@@ -289,3 +289,4 @@ poetry.toml
 /next_batch
 *.env
 *.db
+multi_room_store/
