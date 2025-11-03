@@ -4,7 +4,6 @@ from contextlib import suppress
 
 from os.path import exists
 from pathlib import Path
-import shlex
 
 from nio import AsyncClient, InviteMemberEvent, RoomMessageText, AsyncClientConfig, MegolmEvent, \
     LocalProtocolError, SyncResponse, JoinError
@@ -12,7 +11,7 @@ from nio import AsyncClient, InviteMemberEvent, RoomMessageText, AsyncClientConf
 from sqlalchemy import select
 
 from orderbot.db_classes import setup_db, Rooms
-from orderbot.order_parser_class import ParserWrapper, DMParser
+from orderbot.parser.order_parser_class import ParserWrapper, DMParser
 
 loglevel = log.DEBUG
 log.basicConfig(format="%(levelname)s|%(asctime)s: %(message)s", level=loglevel)
