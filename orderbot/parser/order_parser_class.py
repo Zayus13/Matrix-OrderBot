@@ -3,7 +3,7 @@ import logging
 import traceback
 from typing import List
 
-from orderbot.db_classes import Participant
+from orderbot.db.db_classes import Participant
 from orderbot.parser.parser_builder import build_dm_parser
 from orderbot.parser.parser_specs import CommandSpec, ArgSpec
 
@@ -12,7 +12,6 @@ from sqlalchemy.exc import SQLAlchemyError
 def _strip_usage(help_text: str) -> str:
     lines = help_text.splitlines()
     if lines and lines[0].lstrip().startswith("usage:"):
-        # remove first line and any immediately following blank lines
         idx = 1
         while idx < len(lines) and not lines[idx].strip():
             idx += 1

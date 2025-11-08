@@ -19,7 +19,6 @@ class Participant(Base):
     pid = Column(Integer, primary_key=True)
     name = Column(String, unique=True)
     matrix_address = Column(String, unique=True)
-    user_total = Column(Integer, default=0)
     cuts = relationship(
         "Cuts", backref="participants", lazy=True, cascade="all,delete-orphan"
     )
